@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Logs
+*.log
+bot.log
+http_server.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Documentation (exclude these, but keep jar-of-awesome.md for the app)
+README.md
+DEPLOYMENT.md
+QUICKSTART.md
+deployment/*.md
+
+# IMPORTANT: jar-of-awesome.md is needed by the application
+# Do NOT add it to .dockerignore - it must be copied to the container
+# !jar-of-awesome.md is commented out because it's not being excluded above
+
+# Scripts
+setup-cloud-scheduler.sh
+
+# Temporary
+tmp/
+temp/
+.DS_Store
+
+# Not needed in container
+Dockerfile
+.dockerignore

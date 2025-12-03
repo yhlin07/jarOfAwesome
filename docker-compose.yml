@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jar-of-awesome
+    restart: unless-stopped
+    environment:
+      # Load from .env file
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - TIMEZONE=${TIMEZONE:-Asia/Taipei}
+      - SCHEDULE_TIMES=${SCHEDULE_TIMES:-08:00,12:00,16:00,20:00}
+      - MODEL=${MODEL:-claude-3-5-haiku-20241022}
+      - DEBUG=${DEBUG:-false}
+    env_file:
+      - .env
+    volumes:
+      # Mount affirmation file (allows updates without rebuild)
+      - ./好棒棒罐.md:/app/好棒棒罐.md:ro
+      # Mount source for development (comment out in production)
+      # - ./src:/app/src
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Optional: Add resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M

@@ -1,0 +1,164 @@
+# GitHub Actions Workflow for deploying to Cloud Run
+# 這個檔案告訴 GitHub：什麼時候、怎麼部署你的 bot
+
+name: Deploy to Cloud Run
+
+# 📌 觸發條件：什麼時候執行這個 workflow？
+on:
+  push:
+    branches:
+      - main  # 當你 push 到 main branch 時
+  workflow_dispatch:  # 或者你在 GitHub 介面手動點「Run workflow」
+
+# 🔐 權限設定
+permissions:
+  contents: read
+  id-token: write  # 需要這個來使用 Workload Identity
+
+# 🏃 要執行的任務
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest  # 使用 GitHub 提供的 Ubuntu 虛擬機
+
+    steps:
+      # 步驟 1️⃣：下載你的代碼
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # 📖 這一步把你的 repo 代碼複製到 GitHub 的虛擬機上
+
+      # 步驟 2️⃣：設定 Google Cloud 認證
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+        # 📖 使用你在 GitHub Secrets 設定的 GCP 金鑰來登入
+
+      # 步驟 3️⃣：設定 gcloud CLI
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        # 📖 安裝並設定 gcloud 工具（就是你電腦裝不好的那個）
+
+      # 步驟 4️⃣：設定 Docker buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 步驟 5️⃣：認證 Docker 到 Artifact Registry
+      - name: Configure Docker for GCP
+        run: |
+          gcloud auth configure-docker asia-east1-docker.pkg.dev
+
+      # 步驟 6️⃣：建置並推送 Docker image
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t asia-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/jar-of-awesome:${{ github.sha }} .
+          docker push asia-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/jar-of-awesome:${{ github.sha }}
+
+      # 步驟 7️⃣：部署到 Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy jar-of-awesome \
+            --image asia-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/jar-of-awesome:${{ github.sha }} \
+            --platform managed \
+            --region asia-east1 \
+            --allow-unauthenticated \
+            --min-instances 0 \
+            --max-instances 1 \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 60s \
+            --cpu-boost \
+            --set-env-vars RUN_MODE=http \
+            --set-env-vars TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
+            --set-env-vars TELEGRAM_USER_ID=${{ secrets.TELEGRAM_USER_ID }} \
+            --set-env-vars USE_PREGENERATED=1 \
+            --set-env-vars DEBUG=0 \
+            --set-env-vars TIMEZONE=America/Los_Angeles \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+        # 📖 用預先建置好的 Docker image 部署，避免 Cloud Build 權限問題
+
+      # 步驟 8️⃣：取得 Service URL
+      - name: Get Service URL
+        id: get-url
+        run: |
+          SERVICE_URL=$(gcloud run services describe jar-of-awesome \
+            --platform managed \
+            --region asia-east1 \
+            --format 'value(status.url)' \
+            --project ${{ secrets.GCP_PROJECT_ID }})
+          echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "🚀 Deployed to: $SERVICE_URL"
+        # 📖 取得部署後的 URL，方便你知道服務在哪
+
+      # 步驟 6️⃣：測試 Health Check
+      - name: Test Health Endpoint
+        run: |
+          sleep 10  # 等待服務啟動
+          curl -f ${{ steps.get-url.outputs.url }}/ || echo "⚠️ Health check failed"
+        # 📖 測試服務是否正常運作
+
+      # 步驟 9️⃣：設定 Cloud Scheduler
+      - name: Setup Cloud Scheduler Jobs
+        run: |
+          echo "⏰ Setting up Cloud Scheduler for daily affirmations..."
+
+          SERVICE_URL="${{ steps.get-url.outputs.url }}"
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          REGION="asia-east1"
+          TIMEZONE="America/Los_Angeles"
+
+          # Note: Cloud Scheduler API must be enabled manually in GCP Console
+          # Visit: https://console.cloud.google.com/apis/library/cloudscheduler.googleapis.com
+
+          echo ""
+          echo "🗑️  Deleting old jobs to ensure correct timezone..."
+          # Delete old jobs first (timezone cannot be updated, must recreate)
+          for LABEL in "morning" "noon" "afternoon" "evening"; do
+            JOB_NAME="jar-of-awesome-$LABEL"
+            echo "  Deleting $JOB_NAME..."
+            gcloud scheduler jobs delete $JOB_NAME \
+              --location=$REGION \
+              --project=$PROJECT_ID \
+              --quiet 2>/dev/null && echo "    ✅ Deleted" || echo "    ⚠️  Not found (skipping)"
+          done
+
+          echo ""
+          echo "✨ Creating new jobs with correct timezone ($TIMEZONE)..."
+          # Create 4 jobs for 8am, 12pm, 4pm, 8pm
+          for TIME_INFO in "morning:8" "noon:12" "afternoon:16" "evening:20"; do
+            IFS=':' read -r LABEL HOUR <<< "$TIME_INFO"
+            JOB_NAME="jar-of-awesome-$LABEL"
+
+            echo "  Creating $JOB_NAME at ${HOUR}:00 $TIMEZONE..."
+
+            gcloud scheduler jobs create http $JOB_NAME \
+              --location=$REGION \
+              --schedule="0 ${HOUR} * * *" \
+              --uri="$SERVICE_URL/cron/send-affirmation" \
+              --http-method=POST \
+              --time-zone="$TIMEZONE" \
+              --attempt-deadline=60s \
+              --project=$PROJECT_ID && echo "    ✅ Created" || echo "    ❌ Failed"
+          done
+
+          echo ""
+          echo "✅ Cloud Scheduler setup complete!"
+          echo "📋 Listing all jobs to verify:"
+          gcloud scheduler jobs list --location=$REGION --project=$PROJECT_ID --format="table(name,schedule,timeZone)"
+        # 📖 自動設定 4 個定時任務，每天在指定時間觸發發送
+
+      # 步驟 🔟：顯示部署資訊
+      - name: Deployment Summary
+        run: |
+          echo "🎉 完整部署成功！"
+          echo ""
+          echo "✅ 部署資訊："
+          echo "  📍 Service URL: ${{ steps.get-url.outputs.url }}"
+          echo "  ⏰ 定時發送: 08:00, 12:00, 16:00, 20:00 (America/Los_Angeles)"
+          echo "  💰 預估費用: ~\$0.10/month"
+          echo ""
+          echo "🧪 測試指令："
+          echo "  手動觸發: curl -X POST ${{ steps.get-url.outputs.url }}/cron/send-affirmation"
+          echo ""
+          echo "📊 查看 logs:"
+          echo "  gcloud run services logs read jar-of-awesome --region asia-east1"

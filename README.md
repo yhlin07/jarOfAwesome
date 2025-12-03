@@ -255,12 +255,6 @@ Contributions welcome! Feel free to:
 
 MIT License - Use freely for personal or commercial projects
 
-## 🙏 Acknowledgments
-
-Built with:
-- 🤖 Claude Code (Anthropic) for development
-- 💡 The insight that our brains need external systems to remember progress
-
 ---
 
 *Because sometimes we all need a reminder of how far we've come.*
